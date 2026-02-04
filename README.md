@@ -10,7 +10,6 @@
 
 FluidTop is a Python-based `nvtop`-inspired command line tool specifically designed for Apple Silicon Macs. This enhanced and actively maintained fork of the original [asitop](https://github.com/tlkh/asitop) project provides comprehensive hardware monitoring with additional features, support for newer Apple Silicon chips, and optimizations for modern terminal emulators including Ghostty.
 
-![View animated demo (GIF)](https://raw.githubusercontent.com/FluidInference/fluidtop/main/images/live.gif)
 
 ## 📦 Installation & Usage
 

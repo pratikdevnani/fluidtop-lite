@@ -6,10 +6,9 @@ from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import ProgressBar, Static, Label, Button
+from textual.widgets import ProgressBar, Static, Label
 from textual_plotext import PlotextPlot
 import plotext as plt
-import os
 from datetime import datetime
 from .utils import run_powermetrics_process, parse_powermetrics, get_soc_info, get_ram_metrics_dict
 
@@ -552,25 +551,6 @@ class FluidTopApp(App):
         width: auto;
         text-align: right;
         color: $text;
-        padding: 0 1;
-    }}
-    
-    Button {{
-        margin: 0 1;
-        min-width: 3;
-        height: 1;
-        background: {colors['accent']};
-        color: white;
-        text-style: bold;
-        border: none;
-    }}
-    
-    Button:hover {{
-        background: {colors['primary']};
-        color: white;
-    }}
-    
-    Button:focus {{
         text-style: bold reverse;
     }}
     
@@ -595,11 +575,9 @@ class FluidTopApp(App):
             with Horizontal(id="controls-content"):
                 # System info on the left
                 yield Label("Initializing...", id="system-info-label")
-                # Timestamp and buttons on the right
+                # Timestamp on the right
                 with Horizontal(id="controls-buttons"):
                     yield Label("", id="timestamp-label")
-                    yield Button("📸", id="screenshot-btn", variant="primary")
-                    yield Button("❌", id="quit-btn", variant="error")
         
         # Usage Charts section
         with Vertical(id="usage-section"):
@@ -808,37 +786,6 @@ class FluidTopApp(App):
         timestamp_label = self.query_one("#timestamp-label", Label)
         timestamp_label.update(f"📅 {current_time}")
     
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button press events"""
-        if event.button.id == "screenshot-btn":
-            await self.take_screenshot()
-        elif event.button.id == "quit-btn":
-            await self.quit_application()
-    
-    async def take_screenshot(self) -> None:
-        """Take a screenshot of the current display"""
-        try:
-            # Create screenshots directory if it doesn't exist
-            screenshots_dir = os.path.expanduser("~/fluidtop_screenshots")
-            os.makedirs(screenshots_dir, exist_ok=True)
-            
-            # Generate filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot_path = os.path.join(screenshots_dir, f"fluidtop_{timestamp}.svg")
-            
-            # Save screenshot as SVG (textual's built-in screenshot format)
-            self.save_screenshot(screenshot_path)
-            
-            # Show success notification
-            self.notify(f"Screenshot saved to {screenshot_path}", title="Screenshot Success", severity="information")
-            
-        except Exception as e:
-            # Show error notification
-            self.notify(f"Screenshot failed: {str(e)}", title="Screenshot Error", severity="error")
-    
-    async def quit_application(self) -> None:
-        """Gracefully quit the application"""
-        self.exit()
     
     def on_unmount(self):
         """Clean up when app is closed"""

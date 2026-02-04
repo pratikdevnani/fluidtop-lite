@@ -7,7 +7,6 @@ from typing import Optional
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ProgressBar, Static, Label
-from textual.widgets import ProgressBar, Static, Label
 from textual_plotext import PlotextPlot
 import plotext as plt
 from datetime import datetime

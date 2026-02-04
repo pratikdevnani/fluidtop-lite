@@ -410,7 +410,7 @@ class FluidTopApp(App):
     
     # CSS is set dynamically in _apply_theme method
     
-    def __init__(self, interval: int, theme: str, avg: int, max_count: int):
+    def __init__(self, interval: int, theme: str, avg: int, max_count: int, show_cores: bool = False):
         self.interval = interval
         # Store theme temporarily, don't assign to self.theme yet
         theme_value = theme
@@ -424,6 +424,7 @@ class FluidTopApp(App):
         self._theme_name = theme_value
         self.avg = avg
         self.max_count = max_count
+        self.show_cores = show_cores
         
         # Initialize metrics storage
         # No longer tracking averages or peaks
@@ -449,6 +450,7 @@ class FluidTopApp(App):
         self.p_cpu_usage_buffer = []
         self._render_every_n = 2
         self._render_tick = 0
+        self._core_usage_buffer = {}
         
     def _get_theme_colors(self, theme: str) -> str:
         """Get the color mapping for the theme using plotext-compatible color names"""
@@ -623,6 +625,11 @@ class FluidTopApp(App):
                 yield MultiLineChart("CPU Usage (E-CPU & P-CPU)", ylabel="Usage (%)", interval=self.interval, color=self.theme_colors, id="cpu-combined-chart")
                 yield UsageChart("GPU", interval=self.interval, color=self.theme_colors, id="gpu-usage-chart")
                 yield UsageChart("RAM Usage", ylabel="RAM (%)", interval=self.interval, color=self.theme_colors, id="ram-usage-chart")
+        if self.show_cores:
+            with Vertical(id="core-usage-section"):
+                with Horizontal():
+                    yield MultiLineChart("E-Core Usage", ylabel="Usage (%)", interval=self.interval, color="blue", id="e-core-usage-chart")
+                    yield MultiLineChart("P-Core Usage", ylabel="Usage (%)", interval=self.interval, color="red", id="p-core-usage-chart")
         
         # Power section
         with Vertical(id="power-section"):
@@ -636,7 +643,7 @@ class FluidTopApp(App):
         # Start powermetrics process
         self.timecode = str(int(time.time()))
         self.powermetrics_process = run_powermetrics_process(
-            self.timecode, interval=self.interval * 1000
+            self.timecode, interval=int(self.interval * 1000)
         )
         
         # Wait for first reading
@@ -670,7 +677,7 @@ class FluidTopApp(App):
                 self.powermetrics_process.terminate()
                 self.timecode = str(int(time.time()))
                 self.powermetrics_process = run_powermetrics_process(
-                    self.timecode, interval=self.interval * 1000
+                    self.timecode, interval=int(self.interval * 1000)
                 )
             self.count += 1
             
@@ -766,6 +773,38 @@ class FluidTopApp(App):
         
         ram_chart.update_title(ram_title)
         ram_chart.add_data(ram_usage_percent, render=should_render)
+
+        if self.show_cores:
+            await self.update_core_usage_charts(cpu_metrics_dict, should_render)
+
+    async def update_core_usage_charts(self, cpu_metrics_dict, should_render: bool):
+        """Update per-core usage charts (optional)"""
+        e_core_chart = self.query_one("#e-core-usage-chart", MultiLineChart)
+        p_core_chart = self.query_one("#p-core-usage-chart", MultiLineChart)
+
+        for core_id in cpu_metrics_dict.get("e_core", []):
+            key = f"E{core_id}"
+            metric_key = f"E-Cluster{core_id}_active"
+            core_value = cpu_metrics_dict.get(metric_key)
+            if core_value is None:
+                continue
+            self._core_usage_buffer.setdefault(key, []).append(core_value)
+            if len(self._core_usage_buffer[key]) > self.cpu_usage_buffer_size:
+                self._core_usage_buffer[key].pop(0)
+            smoothed = int(sum(self._core_usage_buffer[key]) / len(self._core_usage_buffer[key]))
+            e_core_chart.add_data(key, smoothed, y_axis="left", color="blue", render=should_render)
+
+        for core_id in cpu_metrics_dict.get("p_core", []):
+            key = f"P{core_id}"
+            metric_key = f"P-Cluster{core_id}_active"
+            core_value = cpu_metrics_dict.get(metric_key)
+            if core_value is None:
+                continue
+            self._core_usage_buffer.setdefault(key, []).append(core_value)
+            if len(self._core_usage_buffer[key]) > self.cpu_usage_buffer_size:
+                self._core_usage_buffer[key].pop(0)
+            smoothed = int(sum(self._core_usage_buffer[key]) / len(self._core_usage_buffer[key]))
+            p_core_chart.add_data(key, smoothed, y_axis="left", color="red", render=should_render)
     
     async def update_power_charts(self, cpu_metrics_dict, thermal_pressure, should_render: bool):
         """Update power chart metrics"""
@@ -848,7 +887,7 @@ class FluidTopApp(App):
                 pass
 
 @click.command()
-@click.option('--interval', type=int, default=1,
+@click.option('--interval', type=float, default=1.0,
               help='Display interval and sampling interval for powermetrics (seconds)')
 @click.option('--theme', type=click.Choice(['default', 'dark', 'blue', 'green', 'red', 'purple', 'orange', 'cyan', 'magenta']), default='cyan',
               help='Choose color theme')
@@ -856,19 +895,21 @@ class FluidTopApp(App):
               help='Interval for averaged values (seconds)')
 @click.option('--max_count', type=int, default=0,
               help='Max show count to restart powermetrics')
-def main(interval, theme, avg, max_count):
+@click.option('--show_cores', is_flag=True, default=False,
+              help='Show per-core CPU usage charts')
+def main(interval, theme, avg, max_count, show_cores):
     """fluidtop: Performance monitoring CLI tool for Apple Silicon"""
-    return _main_logic(interval, theme, avg, max_count)
+    return _main_logic(interval, theme, avg, max_count, show_cores=show_cores)
 
 
-def _main_logic(interval, theme, avg, max_count):
+def _main_logic(interval, theme, avg, max_count, show_cores=False):
     """Main logic using Textual app"""
     print("\nFLUIDTOP - Performance monitoring CLI tool for Apple Silicon")
     print("Get help at `https://github.com/FluidInference/fluidtop`")
     print("P.S. You are recommended to run FLUIDTOP with `sudo fluidtop`\n")
     
     # Create and run the Textual app
-    app = FluidTopApp(interval, theme, avg, max_count)
+    app = FluidTopApp(interval, theme, avg, max_count, show_cores=show_cores)
     try:
         app.run()
     except KeyboardInterrupt:

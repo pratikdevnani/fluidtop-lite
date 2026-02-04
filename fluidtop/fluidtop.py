@@ -7,6 +7,7 @@ from typing import Optional
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import ProgressBar, Static, Label
+from textual.widgets import ProgressBar, Static, Label
 from textual_plotext import PlotextPlot
 import plotext as plt
 from datetime import datetime
@@ -37,18 +38,22 @@ class MetricGauge(Static):
 class PowerChart(PlotextPlot):
     """Custom chart widget for power consumption data"""
     
-    def __init__(self, title: str = "", interval: int = 1, color: str = "cyan", **kwargs):
+    def __init__(self, title: str = "", interval: int = 1, color: str = "cyan", max_points: int = 1200, **kwargs):
         super().__init__(**kwargs)
         self.title = title
         self.interval = interval
         self.plot_color = color
-        # Store up to 3600 data points (1 hour at 1 second intervals)
-        self.data_points = deque(maxlen=3600)
-        self.timestamps = deque(maxlen=3600)
+        # Store up to max_points data points
+        self.data_points = deque(maxlen=max_points)
+        self.timestamps = deque(maxlen=max_points)
         self.start_time = time.time()
         # Track min/max values seen across all time
         self.min_value_seen = None
         self.max_value_seen = None
+        self._last_value = None
+        self._last_range = None
+        self._last_ticks = None
+        self._last_labels = None
         
     def on_mount(self):
         self.plt.title(self.title)
@@ -61,10 +66,15 @@ class PowerChart(PlotextPlot):
         # Set Y-axis decimal precision
         self.plt.yfrequency(0)  # This will auto-determine the frequency
     
-    def add_data(self, value: float):
+    def add_data(self, value: float, render: bool = True):
         current_time = time.time()
         self.data_points.append(value)
         self.timestamps.append(current_time)
+        if not render:
+            return
+        if self._last_value is not None and abs(value - self._last_value) < 0.01:
+            return
+        self._last_value = value
         
         # Update min/max values seen
         if self.min_value_seen is None or value < self.min_value_seen:
@@ -94,14 +104,19 @@ class PowerChart(PlotextPlot):
             y_min = 0
             y_max = 1.0
             
-        # Create 5 evenly spaced y-ticks
-        y_ticks = []
-        y_labels = []
-        for i in range(5):
-            val = y_min + (y_max - y_min) * i / 4
-            y_ticks.append(val)
-            y_labels.append(f"{val:.1f}")
-        self.plt.yticks(y_ticks, y_labels)
+        # Create 5 evenly spaced y-ticks only when range changes
+        current_range = (round(y_min, 2), round(y_max, 2))
+        if current_range != self._last_range:
+            y_ticks = []
+            y_labels = []
+            for i in range(5):
+                val = y_min + (y_max - y_min) * i / 4
+                y_ticks.append(val)
+                y_labels.append(f"{val:.1f}")
+            self._last_ticks = y_ticks
+            self._last_labels = y_labels
+            self._last_range = current_range
+        self.plt.yticks(self._last_ticks, self._last_labels)
         # Set y-axis limits
         self.plt.ylim(y_min, y_max)
         
@@ -145,19 +160,23 @@ class PowerChart(PlotextPlot):
 class UsageChart(PlotextPlot):
     """Custom chart widget for usage percentage data"""
     
-    def __init__(self, title: str = "", ylabel: str = "Usage (%)", interval: int = 1, color: str = "cyan", **kwargs):
+    def __init__(self, title: str = "", ylabel: str = "Usage (%)", interval: int = 1, color: str = "cyan", max_points: int = 1200, **kwargs):
         super().__init__(**kwargs)
         self.title = title
         self.ylabel = ylabel
         self.interval = interval
         self.plot_color = color
-        # Store up to 3600 data points (1 hour at 1 second intervals)
-        self.data_points = deque(maxlen=3600)
-        self.timestamps = deque(maxlen=3600)
+        # Store up to max_points data points
+        self.data_points = deque(maxlen=max_points)
+        self.timestamps = deque(maxlen=max_points)
         self.start_time = time.time()
         # Track min/max values seen across all time
         self.min_value_seen = None
         self.max_value_seen = None
+        self._last_value = None
+        self._last_range = None
+        self._last_ticks = None
+        self._last_labels = None
         
     def on_mount(self):
         self.plt.title(self.title)
@@ -171,10 +190,15 @@ class UsageChart(PlotextPlot):
         # Set Y-axis decimal precision
         self.plt.yfrequency(0)  # This will auto-determine the frequency
     
-    def add_data(self, value: float):
+    def add_data(self, value: float, render: bool = True):
         current_time = time.time()
         self.data_points.append(value)
         self.timestamps.append(current_time)
+        if not render:
+            return
+        if self._last_value is not None and abs(value - self._last_value) < 0.1:
+            return
+        self._last_value = value
         
         # Update min/max values seen
         if self.min_value_seen is None or value < self.min_value_seen:
@@ -218,8 +242,13 @@ class UsageChart(PlotextPlot):
             y_max = 100
             y_ticks = [0, 25, 50, 75, 100]
         
-        y_labels = [f"{val:.1f}" for val in y_ticks]
-        self.plt.yticks(y_ticks, y_labels)
+        current_range = (round(y_min, 2), round(y_max, 2))
+        if current_range != self._last_range:
+            y_labels = [f"{val:.1f}" for val in y_ticks]
+            self._last_ticks = y_ticks
+            self._last_labels = y_labels
+            self._last_range = current_range
+        self.plt.yticks(self._last_ticks, self._last_labels)
         self.plt.ylim(y_min, y_max)
         
         # Set x-axis to show 0.0 to 0.6 minutes ago by default
@@ -262,15 +291,17 @@ class UsageChart(PlotextPlot):
 class MultiLineChart(PlotextPlot):
     """Custom chart widget for displaying multiple data series on the same chart"""
     
-    def __init__(self, title: str = "", ylabel: str = "Value", interval: int = 1, color: str = "cyan", **kwargs):
+    def __init__(self, title: str = "", ylabel: str = "Value", interval: int = 1, color: str = "cyan", max_points: int = 1200, **kwargs):
         super().__init__(**kwargs)
         self.title = title
         self.ylabel = ylabel
         self.interval = interval
         self.plot_color = color
-        # Store up to 3600 data points (1 hour at 1 second intervals) for each series
+        self.max_points = max_points
+        # Store up to max_points data points for each series
         self.data_series = {}  # Will store {'series_name': {'data': deque, 'timestamps': deque}}
         self.start_time = time.time()
+        self._last_values = {}
         
     def on_mount(self):
         self.plt.title(self.title)
@@ -283,7 +314,7 @@ class MultiLineChart(PlotextPlot):
         # Set Y-axis decimal precision
         self.plt.yfrequency(0)  # This will auto-determine the frequency
     
-    def add_data(self, series_name: str, value: float, y_axis: str = "left", color: str | None = None):
+    def add_data(self, series_name: str, value: float, y_axis: str = "left", color: str | None = None, render: bool = True):
         """Add data point to a specific series"""
         current_time = time.time()
         
@@ -292,14 +323,20 @@ class MultiLineChart(PlotextPlot):
             # Use provided color or default to the chart's color
             series_color = color if color else self.plot_color
             self.data_series[series_name] = {
-                'data': deque(maxlen=3600),
-                'timestamps': deque(maxlen=3600),
+                'data': deque(maxlen=self.max_points),
+                'timestamps': deque(maxlen=self.max_points),
                 'y_axis': y_axis,
                 'color': series_color
             }
         
         self.data_series[series_name]['data'].append(value)
         self.data_series[series_name]['timestamps'].append(current_time)
+        if not render:
+            return
+        last_value = self._last_values.get(series_name)
+        if last_value is not None and abs(value - last_value) < 0.1:
+            return
+        self._last_values[series_name] = value
         
         self.plt.clear_data()
         
@@ -411,6 +448,8 @@ class FluidTopApp(App):
         self.cpu_usage_buffer_size = 5  # Average over last 5 samples
         self.e_cpu_usage_buffer = []
         self.p_cpu_usage_buffer = []
+        self._render_every_n = 2
+        self._render_tick = 0
         
     def _get_theme_colors(self, theme: str) -> str:
         """Get the color mapping for the theme using plotext-compatible color names"""
@@ -551,7 +590,7 @@ class FluidTopApp(App):
         width: auto;
         text-align: right;
         color: $text;
-        text-style: bold reverse;
+        padding: 0 1;
     }}
     
     Label {{
@@ -650,11 +689,13 @@ class FluidTopApp(App):
             
             # CPU, GPU, and ANE gauge widgets have been removed
             
+            self._render_tick += 1
+            should_render = (self._render_tick % self._render_every_n) == 0
             # Update usage charts
-            await self.update_usage_charts(cpu_metrics_dict, gpu_metrics_dict)
+            await self.update_usage_charts(cpu_metrics_dict, gpu_metrics_dict, should_render)
             
             # Update power charts
-            await self.update_power_charts(cpu_metrics_dict, thermal_pressure)
+            await self.update_power_charts(cpu_metrics_dict, thermal_pressure, should_render)
             
             # Update timestamp
             await self.update_timestamp()
@@ -663,7 +704,7 @@ class FluidTopApp(App):
             # Handle errors gracefully
             pass
     
-    async def update_usage_charts(self, cpu_metrics_dict, gpu_metrics_dict):
+    async def update_usage_charts(self, cpu_metrics_dict, gpu_metrics_dict, should_render: bool):
         """Update usage chart metrics"""
         # Update combined CPU chart (E-CPU and P-CPU)
         cpu_combined_chart = self.query_one("#cpu-combined-chart", MultiLineChart)
@@ -687,8 +728,20 @@ class FluidTopApp(App):
         p_cpu_usage = int(sum(self.p_cpu_usage_buffer) / len(self.p_cpu_usage_buffer))
         
         # Add both CPU types to the same chart with different colors
-        cpu_combined_chart.add_data(f"E-CPU ({self.soc_info_dict['e_core_count']} cores)", e_cpu_usage, y_axis="left", color="blue")
-        cpu_combined_chart.add_data(f"P-CPU ({self.soc_info_dict['p_core_count']} cores)", p_cpu_usage, y_axis="left", color="red")
+        cpu_combined_chart.add_data(
+            f"E-CPU ({self.soc_info_dict['e_core_count']} cores)",
+            e_cpu_usage,
+            y_axis="left",
+            color="blue",
+            render=should_render,
+        )
+        cpu_combined_chart.add_data(
+            f"P-CPU ({self.soc_info_dict['p_core_count']} cores)",
+            p_cpu_usage,
+            y_axis="left",
+            color="red",
+            render=should_render,
+        )
         
         # Update title to show both CPU types (smoothed values)
         combined_title = f"E-CPU: {e_cpu_usage}% | P-CPU: {p_cpu_usage}%"
@@ -699,7 +752,7 @@ class FluidTopApp(App):
         gpu_usage = gpu_metrics_dict['active']
         gpu_title = f"GPU ({self.soc_info_dict['gpu_core_count']} cores): {gpu_usage}%"
         gpu_chart.update_title(gpu_title)
-        gpu_chart.add_data(gpu_usage)
+        gpu_chart.add_data(gpu_usage, render=should_render)
         
         # Update RAM usage chart with swap information
         ram_metrics_dict = get_ram_metrics_dict()
@@ -713,9 +766,9 @@ class FluidTopApp(App):
             ram_title = f"RAM: {ram_usage_percent:.1f}% ({ram_metrics_dict['used_GB']:.1f}/{ram_metrics_dict['total_GB']:.1f}GB) - swap: {ram_metrics_dict['swap_used_GB']:.1f}/{ram_metrics_dict['swap_total_GB']:.1f}GB"
         
         ram_chart.update_title(ram_title)
-        ram_chart.add_data(ram_usage_percent)
+        ram_chart.add_data(ram_usage_percent, render=should_render)
     
-    async def update_power_charts(self, cpu_metrics_dict, thermal_pressure):
+    async def update_power_charts(self, cpu_metrics_dict, thermal_pressure, should_render: bool):
         """Update power chart metrics"""
         cpu_max_power = self.soc_info_dict["cpu_max_power"]
         gpu_max_power = self.soc_info_dict["gpu_max_power"]
@@ -758,21 +811,21 @@ class FluidTopApp(App):
         cpu_energy_display = format_energy(self.cpu_energy_consumed)
         cpu_title = f"CPU: {cpu_power_W:.2f}W (total: {cpu_energy_display})"
         cpu_power_chart.update_title(cpu_title)
-        cpu_power_chart.add_data(cpu_power_percent)
+        cpu_power_chart.add_data(cpu_power_percent, render=should_render)
         
         gpu_power_chart = self.query_one("#gpu-power-chart", PowerChart)
         gpu_power_percent = gpu_power_W / gpu_max_power * 100  # Keep as float
         gpu_energy_display = format_energy(self.gpu_energy_consumed)
         gpu_title = f"GPU: {gpu_power_W:.2f}W (total: {gpu_energy_display})"
         gpu_power_chart.update_title(gpu_title)
-        gpu_power_chart.add_data(gpu_power_percent)
+        gpu_power_chart.add_data(gpu_power_percent, render=should_render)
         
         ane_power_chart = self.query_one("#ane-power-chart", PowerChart)
         ane_power_percent = ane_power_W / ane_max_power * 100  # Keep as float
         ane_energy_display = format_energy(self.ane_energy_consumed)
         ane_title = f"ANE: {ane_power_W:.2f}W (total: {ane_energy_display})"
         ane_power_chart.update_title(ane_title)
-        ane_power_chart.add_data(ane_power_percent)
+        ane_power_chart.add_data(ane_power_percent, render=should_render)
         
         # Update system info label with total power and thermal info
         thermal_throttle = "no" if thermal_pressure == "Nominal" else "yes"

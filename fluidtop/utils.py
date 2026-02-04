@@ -5,31 +5,27 @@ from subprocess import PIPE
 import psutil
 from .parsers import *
 import plistlib
+import json
 
 
-def parse_powermetrics(path='/tmp/fluidtop_powermetrics', timecode="0"):
-    data = None
+def parse_powermetrics(path='/tmp/fluidtop_powermetrics', timecode="0", tail_bytes=1024 * 512):
     try:
-        with open(path+timecode, 'rb') as fp:
+        with open(path + timecode, 'rb') as fp:
+            fp.seek(0, os.SEEK_END)
+            size = fp.tell()
+            fp.seek(max(size - tail_bytes, 0))
             data = fp.read()
-        data = data.split(b'\x00')
-        powermetrics_parse = plistlib.loads(data[-1])
-        thermal_pressure = parse_thermal_pressure(powermetrics_parse)
-        cpu_metrics_dict = parse_cpu_metrics(powermetrics_parse)
-        gpu_metrics_dict = parse_gpu_metrics(powermetrics_parse)
-        bandwidth_metrics = None
-        timestamp = powermetrics_parse["timestamp"]
-        return cpu_metrics_dict, gpu_metrics_dict, thermal_pressure, bandwidth_metrics, timestamp
-    except Exception as e:
-        if data:
-            if len(data) > 1:
-                powermetrics_parse = plistlib.loads(data[-2])
+        parts = data.rsplit(b'\x00', maxsplit=2)
+        for part in reversed(parts):
+            if part.strip():
+                powermetrics_parse = plistlib.loads(part)
                 thermal_pressure = parse_thermal_pressure(powermetrics_parse)
                 cpu_metrics_dict = parse_cpu_metrics(powermetrics_parse)
                 gpu_metrics_dict = parse_gpu_metrics(powermetrics_parse)
                 bandwidth_metrics = None
                 timestamp = powermetrics_parse["timestamp"]
                 return cpu_metrics_dict, gpu_metrics_dict, thermal_pressure, bandwidth_metrics, timestamp
+    except Exception:
         return False
 
 
@@ -59,7 +55,12 @@ def run_powermetrics_process(timecode, nice=10, interval=1000):
         "-i",
         str(interval)
     ])
-    process = subprocess.Popen(command.split(" "), stdin=PIPE, stdout=PIPE)
+    process = subprocess.Popen(
+        command.split(" "),
+        stdin=PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     return process
 
 
@@ -144,55 +145,17 @@ def get_soc_info():
         "gpu_core_count": get_gpu_cores()
     }
     # TDP (power)
-    if soc_info["name"] == "Apple M1 Max":
-        soc_info["cpu_max_power"] = 30
-        soc_info["gpu_max_power"] = 60
-    elif soc_info["name"] == "Apple M1 Pro":
-        soc_info["cpu_max_power"] = 30
-        soc_info["gpu_max_power"] = 30
-    elif soc_info["name"] == "Apple M1":
-        soc_info["cpu_max_power"] = 20
-        soc_info["gpu_max_power"] = 20
-    elif soc_info["name"] == "Apple M1 Ultra":
-        soc_info["cpu_max_power"] = 60
-        soc_info["gpu_max_power"] = 120
-    elif soc_info["name"] == "Apple M2":
-        soc_info["cpu_max_power"] = 25
-        soc_info["gpu_max_power"] = 15
-    elif soc_info["name"] == "Apple M2 Pro":
-        soc_info["cpu_max_power"] = 30
-        soc_info["gpu_max_power"] = 19
-    elif soc_info["name"] == "Apple M2 Max":
-        soc_info["cpu_max_power"] = 38
-        soc_info["gpu_max_power"] = 38
-    elif soc_info["name"] == "Apple M2 Ultra":
-        soc_info["cpu_max_power"] = 76
-        soc_info["gpu_max_power"] = 76
-    elif soc_info["name"] == "Apple M3":
-        soc_info["cpu_max_power"] = 22
-        soc_info["gpu_max_power"] = 13
-    elif soc_info["name"] == "Apple M3 Pro":
-        soc_info["cpu_max_power"] = 37
-        soc_info["gpu_max_power"] = 19
-    elif soc_info["name"] == "Apple M3 Max":
-        soc_info["cpu_max_power"] = 54
-        soc_info["gpu_max_power"] = 47
-    elif soc_info["name"] == "Apple M3 Ultra":
-        soc_info["cpu_max_power"] = 108
-        soc_info["gpu_max_power"] = 94
-    elif soc_info["name"] == "Apple M4":
-        soc_info["cpu_max_power"] = 22
-        soc_info["gpu_max_power"] = 13
-    elif soc_info["name"] == "Apple M4 Pro":
-        soc_info["cpu_max_power"] = 42
-        soc_info["gpu_max_power"] = 23
-    elif soc_info["name"] == "Apple M4 Max":
-        soc_info["cpu_max_power"] = 68
-        soc_info["gpu_max_power"] = 57
-    elif soc_info["name"] == "Apple M4 Ultra":
-        soc_info["cpu_max_power"] = 136
-        soc_info["gpu_max_power"] = 114
-    else:
-        soc_info["cpu_max_power"] = 20
-        soc_info["gpu_max_power"] = 20
+    soc_info_defaults = {
+        "cpu_max_power": 20,
+        "gpu_max_power": 20,
+    }
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), "soc_info.json")
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            soc_info_map = json.load(config_file)
+        soc_info_defaults.update(soc_info_map.get(soc_info["name"], {}))
+    except Exception:
+        pass
+    soc_info["cpu_max_power"] = soc_info_defaults["cpu_max_power"]
+    soc_info["gpu_max_power"] = soc_info_defaults["gpu_max_power"]
     return soc_info
